@@ -434,6 +434,12 @@ class CandidateEval:
     danger_tags: List[str]
     eff_score: float
     balanced_score: float
+    est_han: float = 1.0
+    est_points: int = 1000
+    points_score: float = 0.0
+    eff_points_score: float = 0.0
+    def_points_score: float = 0.0
+    yaku_tags: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -442,9 +448,16 @@ class RecommendationResult:
     efficiency_best: Optional[CandidateEval]
     defense_best: Optional[CandidateEval]
     balanced_best: Optional[CandidateEval]
+    points_best: Optional[CandidateEval]
+    eff_points_best: Optional[CandidateEval]
+    def_points_best: Optional[CandidateEval]
     candidates: List[CandidateEval]
     dora_tiles34: List[int]
     visible34: List[int]
+    can_riichi: bool = False
+    riichi_eff_best: Optional[CandidateEval] = None
+    riichi_def_best: Optional[CandidateEval] = None
+    riichi_points_best: Optional[CandidateEval] = None
     summary_note: str = ''
 
 
@@ -644,6 +657,122 @@ def evaluate_danger(tile34: int, is_aka: bool, board: BoardState, visible34: Lis
     return round(combined, 2), all_tags
 
 
+def _estimate_hand_value(
+    c13: List[int],
+    board: BoardState,
+    discard_code: str,
+    dora_set34: set,
+    sh: int,
+    num_melds: int,
+    player_count: int,
+) -> Tuple[float, int, List[str]]:
+    """Estimate expected han, points, and yaku tags for the remaining 13-tile hand."""
+    tags: List[str] = []
+    han = 0.0
+
+    # 1. Dora & Akadora remaining in hand (plus melds)
+    aka_kept = sum(1 for c in board.hand if is_aka5(c)) - (1 if is_aka5(discard_code) else 0)
+    dora_kept = sum(c13[d] for d in dora_set34)
+    for grp in board.melds[0]:
+        for c in grp:
+            if is_aka5(c):
+                aka_kept += 1
+            if code_to_34(c) in dora_set34:
+                dora_kept += 1
+    kita_kept = board.kita[0] if player_count == 3 else 0
+    total_dora = max(0, aka_kept) + max(0, dora_kept) + max(0, kita_kept)
+    if total_dora > 0:
+        han += float(total_dora)
+        tags.append(f'宝牌×{total_dora}')
+
+    # 2. Menzen / Riichi potential
+    if num_melds == 0:
+        han += 1.2  # Riichi + tsumo/ura potential
+        tags.append('门清立直')
+
+    # 3. Tanyao (断幺九)
+    term_honor_cnt = sum(c13[i] for i in (0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33))
+    meld_has_term = any(
+        code_to_34(c) in (0, 8, 9, 17, 18, 26, 27, 28, 29, 30, 31, 32, 33)
+        for grp in board.melds[0] for c in grp
+    )
+    if not meld_has_term:
+        if term_honor_cnt == 0:
+            han += 1.0
+            tags.append('断幺九')
+        elif term_honor_cnt <= 2:
+            han += 0.35
+
+    # 4. Yakuhai (三元牌 & 风牌)
+    yakuhai_han = 0.0
+    for z in (31, 32, 33):  # 白 发 中
+        if c13[z] >= 3:
+            yakuhai_han += 1.0
+        elif c13[z] == 2:
+            yakuhai_han += 0.45
+    for z in (27, 28):  # 东 南
+        if c13[z] >= 3:
+            yakuhai_han += 0.8
+        elif c13[z] == 2:
+            yakuhai_han += 0.25
+    if yakuhai_han > 0:
+        han += yakuhai_han
+        tags.append('役牌')
+
+    # 5. Flush (清一色 / 混一色)
+    suit_cnts = [sum(c13[s * 9:(s + 1) * 9]) for s in range(3)]
+    honor_cnt = sum(c13[27:34])
+    meld_suits = set()
+    meld_has_honor = False
+    for grp in board.melds[0]:
+        for c in grp:
+            idx = code_to_34(c)
+            if idx >= 27:
+                meld_has_honor = True
+            else:
+                meld_suits.add(idx // 9)
+    max_suit_idx = max(range(3), key=lambda s: suit_cnts[s])
+    other_suit_cnt = sum(suit_cnts[s] for s in range(3) if s != max_suit_idx)
+    if len(meld_suits) <= 1 and (not meld_suits or max_suit_idx in meld_suits):
+        if other_suit_cnt == 0:
+            if honor_cnt == 0 and not meld_has_honor:
+                han += 6.0 if num_melds == 0 else 5.0
+                tags.append('清一色')
+            else:
+                han += 3.0 if num_melds == 0 else 2.0
+                tags.append('混一色')
+        elif other_suit_cnt <= 2:
+            han += 0.8
+            tags.append('一色倾向')
+
+    # 6. Chiitoitsu (七对子)
+    if num_melds == 0 and shanten_chiitoi(c13) <= max(1, sh):
+        pairs = sum(1 for x in c13 if x >= 2)
+        if pairs >= 4:
+            han = max(han, 2.0 + total_dora)
+            tags.append('七对子')
+
+    han = max(1.0, han)
+    # Approximate Ron/Tsumo points table (non-dealer)
+    if han < 1.5:
+        pts = 1000
+    elif han < 2.5:
+        pts = 2000
+    elif han < 3.5:
+        pts = 3900
+    elif han < 4.5:
+        pts = 7700
+    elif han < 6.0:
+        pts = 8000
+    elif han < 8.0:
+        pts = 12000
+    elif han < 11.0:
+        pts = 16000
+    else:
+        pts = 24000
+    return round(han, 1), pts, tags
+
+
 def recommend_discards(board: BoardState) -> RecommendationResult:
     p_cnt = 3 if board.player_count == 3 else 4
     num_melds = len(board.melds[0])
@@ -679,9 +808,13 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
             efficiency_best=None,
             defense_best=None,
             balanced_best=None,
+            points_best=None,
+            eff_points_best=None,
+            def_points_best=None,
             candidates=[],
             dora_tiles34=dora_tiles34,
             visible34=visible34,
+            can_riichi=False,
             summary_note=note,
         )
 
@@ -739,6 +872,13 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
         furiten_pen = -25.0 if furiten else 0.0
         eff_score = -sh * 1000.0 + uk * 10.0 + two_step * 0.45 - dora_lost * 2.5 + furiten_pen
 
+        est_han, est_points, yaku_tags = _estimate_hand_value(
+            c13, board, code, dora_set34, sh, num_melds, p_cnt
+        )
+        points_score = est_points - sh * 1400.0 + uk * 35.0 - (1500.0 if furiten else 0.0)
+        eff_points_score = eff_score + est_points * 0.08
+        def_points_score = est_points * 0.06 - danger * 18.0 - sh * 220.0
+
         raw_evals.append(CandidateEval(
             code=code,
             idx34=idx,
@@ -751,10 +891,19 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
             danger_tags=d_tags,
             eff_score=round(eff_score, 2),
             balanced_score=0.0,
+            est_han=est_han,
+            est_points=est_points,
+            points_score=round(points_score, 1),
+            eff_points_score=round(eff_points_score, 1),
+            def_points_score=round(def_points_score, 1),
+            yaku_tags=yaku_tags,
         ))
 
     if not raw_evals:
-        return RecommendationResult(cur_sh, None, None, None, [], dora_tiles34, visible34, summary_note=kita_note)
+        return RecommendationResult(
+            cur_sh, None, None, None, None, None, None, [], dora_tiles34, visible34,
+            can_riichi=False, summary_note=kita_note
+        )
 
     best_sh = min(e.shanten for e in raw_evals)
     best_uk_at_min_sh = max(e.ukeire for e in raw_evals if e.shanten == best_sh)
@@ -780,6 +929,20 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
     eff_best = max(raw_evals, key=lambda e: (e.eff_score, -e.danger))
     def_best = min(raw_evals, key=lambda e: (e.danger, e.shanten, -e.ukeire, -e.eff_score))
     bal_best = max(raw_evals, key=lambda e: (e.balanced_score, e.eff_score))
+    pts_best = max(raw_evals, key=lambda e: (e.points_score, e.est_points, e.eff_score))
+    eff_pts_best = max(raw_evals, key=lambda e: (e.eff_points_score, e.eff_score))
+    def_pts_best = max(raw_evals, key=lambda e: (e.def_points_score, -e.danger, e.est_points))
+
+    # Check if self has a Riichi opportunity (menzen, not already riichi, at least one tenpai discard)
+    tenpai_cands = [e for e in raw_evals if e.shanten == 0]
+    can_riichi = (num_melds == 0) and (not board.riichi[0]) and len(tenpai_cands) > 0
+    riichi_eff_best = None
+    riichi_def_best = None
+    riichi_pts_best = None
+    if can_riichi:
+        riichi_eff_best = max(tenpai_cands, key=lambda e: (e.ukeire, -int(e.furiten), e.eff_score, -e.danger))
+        riichi_def_best = min(tenpai_cands, key=lambda e: (e.danger, int(e.furiten), -e.ukeire))
+        riichi_pts_best = max(tenpai_cands, key=lambda e: (e.est_points, e.ukeire, -int(e.furiten)))
 
     candidates_sorted = sorted(raw_evals, key=lambda e: (-e.balanced_score, -e.eff_score))
 
@@ -788,8 +951,15 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
         efficiency_best=eff_best,
         defense_best=def_best,
         balanced_best=bal_best,
+        points_best=pts_best,
+        eff_points_best=eff_pts_best,
+        def_points_best=def_pts_best,
         candidates=candidates_sorted,
         dora_tiles34=dora_tiles34,
         visible34=visible34,
+        can_riichi=can_riichi,
+        riichi_eff_best=riichi_eff_best,
+        riichi_def_best=riichi_def_best,
+        riichi_points_best=riichi_pts_best,
         summary_note=kita_note,
     )

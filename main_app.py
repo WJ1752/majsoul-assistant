@@ -320,19 +320,37 @@ class MajsoulAdvisorApp:
         self.meta_var = tk.StringVar(value='宝牌: - | 副露/立直: -')
         tk.Label(edit_row, textvariable=self.meta_var, bg=BG_CARD, fg=ACCENT_BAL, font=('Microsoft YaHei UI', 9)).pack(side=tk.RIGHT)
 
-        # 3 Recommendation Hero Cards
+        # 6 Main Recommendation Hero Cards (2 rows x 3 cols)
         cards_row = tk.Frame(self.root, bg=BG_MAIN)
-        cards_row.pack(fill=tk.X, padx=12, pady=(0, 8))
+        cards_row.pack(fill=tk.X, padx=12, pady=(0, 6))
         for i in range(3):
             cards_row.columnconfigure(i, weight=1, uniform='rec_card')
 
-        self.card_eff = self._create_rec_card(cards_row, 0, '⚡ 牌效最佳何切', ACCENT_EFF)
-        self.card_def = self._create_rec_card(cards_row, 1, '🛡 防御最佳何切', ACCENT_DEF)
-        self.card_bal = self._create_rec_card(cards_row, 2, '⚖ 牌效+防御最佳何切', ACCENT_BAL)
+        self.card_eff = self._create_rec_card(cards_row, 0, 0, '⚡ 牌效最佳何切', ACCENT_EFF)
+        self.card_def = self._create_rec_card(cards_row, 0, 1, '🛡 防御最佳何切', ACCENT_DEF)
+        self.card_bal = self._create_rec_card(cards_row, 0, 2, '⚖ 牌效+防御何切', ACCENT_BAL)
+
+        self.card_pts = self._create_rec_card(cards_row, 1, 0, '💰 最佳点数何切', '#FBBF24')
+        self.card_eff_pts = self._create_rec_card(cards_row, 1, 1, '🎯 牌效+点数何切', '#FB923C')
+        self.card_def_pts = self._create_rec_card(cards_row, 1, 2, '🏰 防御+点数何切', '#2DD4BF')
+
+        # Conditional Riichi Recommendation Row (shown only when self has riichi opportunity)
+        self.riichi_frame = tk.Frame(self.root, bg='#2A1215', padx=8, pady=6,
+                                     highlightbackground='#F43F5E', highlightthickness=1)
+        tk.Label(self.riichi_frame, text='🔥 检测到自家有立直机会！以下为立直何切建议：',
+                 bg='#2A1215', fg='#FDA4AF', font=('Microsoft YaHei UI', 9, 'bold'), anchor='w').pack(fill=tk.X, pady=(0, 4))
+        riichi_grid = tk.Frame(self.riichi_frame, bg='#2A1215')
+        riichi_grid.pack(fill=tk.X)
+        for i in range(3):
+            riichi_grid.columnconfigure(i, weight=1, uniform='riichi_card')
+        self.card_r_eff = self._create_rec_card(riichi_grid, 0, 0, '🔥 最佳牌效立直何切', '#F43F5E')
+        self.card_r_def = self._create_rec_card(riichi_grid, 0, 1, '🛡 最佳防御立直何切', '#34D399')
+        self.card_r_pts = self._create_rec_card(riichi_grid, 0, 2, '💰 最佳点数立直何切', '#FBBF24')
 
         # Bottom Split: Left = All Candidates Table, Right = 4-Player Board Details
-        bottom = tk.Frame(self.root, bg=BG_MAIN)
-        bottom.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
+        self.bottom_frame = tk.Frame(self.root, bg=BG_MAIN)
+        self.bottom_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=(0, 10))
+        bottom = self.bottom_frame
         bottom.columnconfigure(0, weight=3)
         bottom.columnconfigure(1, weight=2)
         bottom.rowconfigure(0, weight=1)
@@ -343,21 +361,23 @@ class MajsoulAdvisorApp:
         tk.Label(tbl_frame, text='全部候选切牌对比（按综合评分排序）', bg=BG_CARD, fg=FG_TEXT,
                  font=('Microsoft YaHei UI', 9, 'bold'), anchor='w', padx=8, pady=5).pack(fill=tk.X)
 
-        cols = ('tile', 'shanten', 'ukeire', 'danger', 'bal', 'tags')
-        self.tree = ttk.Treeview(tbl_frame, columns=cols, show='headings', height=10)
+        cols = ('tile', 'shanten', 'ukeire', 'points', 'danger', 'bal', 'tags')
+        self.tree = ttk.Treeview(tbl_frame, columns=cols, show='headings', height=9)
         self.tree.heading('tile', text='切牌')
         self.tree.heading('shanten', text='切后向听')
-        self.tree.heading('ukeire', text='向听枚数')
+        self.tree.heading('ukeire', text='进张')
+        self.tree.heading('points', text='预估点数')
         self.tree.heading('danger', text='危险度')
         self.tree.heading('bal', text='综合分')
         self.tree.heading('tags', text='防御/牌型说明')
 
         self.tree.column('tile', width=72, anchor='center')
-        self.tree.column('shanten', width=86, anchor='center')
-        self.tree.column('ukeire', width=72, anchor='center')
-        self.tree.column('danger', width=66, anchor='center')
-        self.tree.column('bal', width=66, anchor='center')
-        self.tree.column('tags', width=210, anchor='w')
+        self.tree.column('shanten', width=96, anchor='center')
+        self.tree.column('ukeire', width=64, anchor='center')
+        self.tree.column('points', width=72, anchor='center')
+        self.tree.column('danger', width=60, anchor='center')
+        self.tree.column('bal', width=60, anchor='center')
+        self.tree.column('tags', width=180, anchor='w')
         self.tree.pack(fill=tk.BOTH, expand=True, padx=4, pady=(0, 4))
 
         # Right: Recognized 4-Player Table State Log
@@ -379,34 +399,35 @@ class MajsoulAdvisorApp:
             relief=tk.FLAT, padx=10, pady=4, font=font, cursor='hand2'
         )
 
-    def _create_rec_card(self, parent, col_idx: int, title: str, accent: str) -> dict:
-        card = tk.Frame(parent, bg=BG_CARD, padx=10, pady=8, highlightbackground=accent, highlightthickness=1)
-        pad = (0, 6) if col_idx == 0 else ((6, 0) if col_idx == 2 else (3, 3))
-        card.grid(row=0, column=col_idx, sticky='nsew', padx=pad)
+    def _create_rec_card(self, parent, row_idx: int, col_idx: int, title: str, accent: str) -> dict:
+        card = tk.Frame(parent, bg=BG_CARD, padx=8, pady=5, highlightbackground=accent, highlightthickness=1)
+        padx = (0, 5) if col_idx == 0 else ((5, 0) if col_idx == 2 else (3, 3))
+        pady = (0, 5) if row_idx == 0 else (0, 0)
+        card.grid(row=row_idx, column=col_idx, sticky='nsew', padx=padx, pady=pady)
 
-        tk.Label(card, text=title, bg=BG_CARD, fg=accent, font=('Microsoft YaHei UI', 10, 'bold')).pack(anchor='w')
+        tk.Label(card, text=title, bg=BG_CARD, fg=accent, font=('Microsoft YaHei UI', 9, 'bold')).pack(anchor='w')
 
         body = tk.Frame(card, bg=BG_CARD)
-        body.pack(fill=tk.X, pady=(6, 4))
+        body.pack(fill=tk.X, pady=(3, 2))
 
         icon_lbl = tk.Label(body, bg=BG_CARD)
-        icon_lbl.pack(side=tk.LEFT, padx=(0, 10))
+        icon_lbl.pack(side=tk.LEFT, padx=(0, 8))
 
         right = tk.Frame(body, bg=BG_CARD)
         right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        tile_lbl = tk.Label(right, text='--', bg=BG_CARD, fg=FG_TEXT, font=('Microsoft YaHei UI', 15, 'bold'), anchor='w')
+        tile_lbl = tk.Label(right, text='--', bg=BG_CARD, fg=FG_TEXT, font=('Microsoft YaHei UI', 13, 'bold'), anchor='w')
         tile_lbl.pack(fill=tk.X)
 
-        sh_lbl = tk.Label(right, text='向听数: --', bg=BG_CARD, fg=FG_TEXT, font=('Microsoft YaHei UI', 10), anchor='w')
+        sh_lbl = tk.Label(right, text='向听: --', bg=BG_CARD, fg=FG_TEXT, font=('Microsoft YaHei UI', 9), anchor='w')
         sh_lbl.pack(fill=tk.X)
 
-        uk_lbl = tk.Label(right, text='向听枚数: --', bg=BG_CARD, fg=accent, font=('Microsoft YaHei UI', 10, 'bold'), anchor='w')
+        uk_lbl = tk.Label(right, text='进张: -- | 点数: --', bg=BG_CARD, fg=accent, font=('Microsoft YaHei UI', 9, 'bold'), anchor='w')
         uk_lbl.pack(fill=tk.X)
 
         sub_lbl = tk.Label(card, text='等待识别...', bg=BG_CARD, fg=FG_MUTED, font=('Microsoft YaHei UI', 8),
                            anchor='w', justify=tk.LEFT, wraplength=300)
-        sub_lbl.pack(fill=tk.X, pady=(2, 0))
+        sub_lbl.pack(fill=tk.X, pady=(1, 0))
 
         return {'icon': icon_lbl, 'tile': tile_lbl, 'sh': sh_lbl, 'uk': uk_lbl, 'sub': sub_lbl}
 
@@ -705,22 +726,41 @@ class MajsoulAdvisorApp:
             f'{mode_cn} | 当前向听: {format_shanten(advice.current_shanten)} | 宝牌: {dora_cn}{kita_str} | 立直: {r_txt}'
         )
 
-        # 2. Update 3 recommendation cards
-        self._update_card(self.card_eff, advice.efficiency_best, 'eff', advice.summary_note)
-        self._update_card(self.card_def, advice.defense_best, 'def', advice.summary_note)
-        self._update_card(self.card_bal, advice.balanced_best, 'bal', advice.summary_note)
+        # 2. Update 6 main recommendation cards
+        cur_sh = advice.current_shanten
+        self._update_card(self.card_eff, advice.efficiency_best, 'eff', cur_sh, advice.summary_note)
+        self._update_card(self.card_def, advice.defense_best, 'def', cur_sh, advice.summary_note)
+        self._update_card(self.card_bal, advice.balanced_best, 'bal', cur_sh, advice.summary_note)
+        self._update_card(self.card_pts, advice.points_best, 'pts', cur_sh, advice.summary_note)
+        self._update_card(self.card_eff_pts, advice.eff_points_best, 'eff_pts', cur_sh, advice.summary_note)
+        self._update_card(self.card_def_pts, advice.def_points_best, 'def_pts', cur_sh, advice.summary_note)
+
+        # 2b. Show/hide temporary Riichi recommendation row
+        if advice.can_riichi:
+            if not self.riichi_frame.winfo_ismapped():
+                self.riichi_frame.pack(fill=tk.X, padx=12, pady=(0, 6), before=self.bottom_frame)
+            self._update_card(self.card_r_eff, advice.riichi_eff_best, 'r_eff', cur_sh, '')
+            self._update_card(self.card_r_def, advice.riichi_def_best, 'r_def', cur_sh, '')
+            self._update_card(self.card_r_pts, advice.riichi_points_best, 'r_pts', cur_sh, '')
+        else:
+            if self.riichi_frame.winfo_ismapped():
+                self.riichi_frame.pack_forget()
 
         # 3. Populate candidate table
         for item in self.tree.get_children():
             self.tree.delete(item)
         for c in advice.candidates:
-            sh_txt = format_shanten(c.shanten)
-            uk_txt = f'{c.ukeire} 枚' + (' (振听)' if c.furiten else '')
+            delta = c.shanten - cur_sh
+            delta_str = '(向听不变)' if delta == 0 else f'(向听{delta:+d})'
+            sh_txt = f'{format_shanten(c.shanten)} {delta_str}'
+            uk_txt = f'{c.ukeire}枚' + ('(振)' if c.furiten else '')
+            pts_txt = f'{c.est_points}点'
             tags_txt = ' / '.join(c.danger_tags) if c.danger_tags else '-'
             self.tree.insert('', tk.END, values=(
                 f'{code_to_cn(c.code)} ({c.code})',
                 sh_txt,
                 uk_txt,
+                pts_txt,
                 f'{c.danger:.1f}',
                 f'{c.balanced_score:.1f}',
                 tags_txt,
@@ -747,33 +787,46 @@ class MajsoulAdvisorApp:
         self.detail_text.insert('1.0', '\n'.join(lines))
         self.detail_text.configure(state=tk.DISABLED)
 
-    def _update_card(self, card: dict, cand: Optional[CandidateEval], mode: str, fallback_note: str):
+    def _update_card(self, card: dict, cand: Optional[CandidateEval], mode: str, cur_sh: int, fallback_note: str):
         if cand is None:
             card['icon'].configure(image='')
             card['tile'].configure(text='--')
-            card['sh'].configure(text='向听数: --')
-            card['uk'].configure(text='向听枚数: --')
+            card['sh'].configure(text='向听: --')
+            card['uk'].configure(text='进张: -- | 点数: --')
             card['sub'].configure(text=fallback_note or '需 3k+2 张手牌（摸牌待切状态）')
             return
 
         ic = self.tk_icons.get(cand.code)
         card['icon'].configure(image=ic if ic else '')
         card['tile'].configure(text=f'切 {code_to_cn(cand.code)} ({cand.code})')
-        card['sh'].configure(text=f'打出后向听数: {format_shanten(cand.shanten)}')
-        card['uk'].configure(text=f'打出后向听枚数: {cand.ukeire} 枚' + (' [振听!]' if cand.furiten else ''))
+
+        delta = cand.shanten - cur_sh
+        delta_str = '(向听不变)' if delta == 0 else f'(向听{delta:+d})'
+        card['sh'].configure(text=f'{format_shanten(cand.shanten)} {delta_str}')
+
+        fur_str = ' [振听!]' if cand.furiten else ''
+        card['uk'].configure(text=f'进张 {cand.ukeire}枚{fur_str} | 约{cand.est_points}点')
 
         # Format top improving tiles breakdown
-        top_uk = sorted(cand.ukeire_tiles, key=lambda x: -x[1])[:8]
+        top_uk = sorted(cand.ukeire_tiles, key=lambda x: -x[1])[:6]
         uk_list_str = ' '.join(f'{code_to_cn(idx34_to_code(t))}×{rem}' for t, rem in top_uk)
-        if len(cand.ukeire_tiles) > 8:
+        if len(cand.ukeire_tiles) > 6:
             uk_list_str += ' ...'
         tags_str = ' / '.join(cand.danger_tags) if cand.danger_tags else '常规'
-        if mode == 'eff':
-            card['sub'].configure(text=f'进张明细: {uk_list_str or "无"}\n危险度: {cand.danger:.1f} ({tags_str})')
-        elif mode == 'def':
-            card['sub'].configure(text=f'安全评估: 危险度 {cand.danger:.1f} ({tags_str})\n进张保留: {uk_list_str or "无"}')
+        yaku_str = ' '.join(cand.yaku_tags[:3]) if cand.yaku_tags else '常规'
+
+        if mode in ('eff', 'r_eff'):
+            card['sub'].configure(text=f'进张: {uk_list_str or "无"} | 危险 {cand.danger:.1f} ({tags_str})')
+        elif mode in ('def', 'r_def'):
+            card['sub'].configure(text=f'危险 {cand.danger:.1f} ({tags_str}) | 进张: {uk_list_str or "无"}')
+        elif mode in ('pts', 'r_pts'):
+            card['sub'].configure(text=f'打点: {cand.est_han:.1f}番 ({yaku_str}) | 危险 {cand.danger:.1f}')
+        elif mode == 'eff_pts':
+            card['sub'].configure(text=f'打点: {cand.est_han:.1f}番 ({yaku_str}) | 进张: {uk_list_str or "无"}')
+        elif mode == 'def_pts':
+            card['sub'].configure(text=f'危险 {cand.danger:.1f} ({tags_str}) | 打点: {cand.est_han:.1f}番 ({yaku_str})')
         else:
-            card['sub'].configure(text=f'综合评分: {cand.balanced_score:.1f} | 危险度 {cand.danger:.1f} ({tags_str})\n进张明细: {uk_list_str or "无"}')
+            card['sub'].configure(text=f'综合 {cand.balanced_score:.1f} | 危险 {cand.danger:.1f} ({tags_str})')
 
     def _show_annotated_preview(self):
         if self.last_capture_img is None or self.last_rec is None:
