@@ -723,7 +723,7 @@ class MajsoulAdvisorApp:
             kita_str = ''
         r_txt = ','.join(riichi_players) if riichi_players else '无'
         self.meta_var.set(
-            f'{mode_cn} | 当前向听: {format_shanten(advice.current_shanten)} | 宝牌: {dora_cn}{kita_str} | 立直: {r_txt}'
+            f'{mode_cn} | 当前向听: {format_shanten(advice.current_shanten)} | 确定番数: {advice.confirmed_han}番 | 预计和牌: {advice.expected_han_range} | 宝牌: {dora_cn}{kita_str} | 立直: {r_txt}'
         )
 
         # 2. Update 6 main recommendation cards

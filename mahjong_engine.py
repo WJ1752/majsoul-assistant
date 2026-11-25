@@ -458,6 +458,8 @@ class RecommendationResult:
     riichi_eff_best: Optional[CandidateEval] = None
     riichi_def_best: Optional[CandidateEval] = None
     riichi_points_best: Optional[CandidateEval] = None
+    confirmed_han: int = 0
+    expected_han_range: str = '1~2番'
     summary_note: str = ''
 
 
@@ -945,6 +947,26 @@ def recommend_discards(board: BoardState) -> RecommendationResult:
         riichi_pts_best = max(tenpai_cands, key=lambda e: (e.est_points, e.ukeire, -int(e.furiten)))
 
     candidates_sorted = sorted(raw_evals, key=lambda e: (-e.balanced_score, -e.eff_score))
+
+    # Confirmed han in current hand + melds
+    conf_dora = sum(1 for c in board.hand if is_aka5(c)) + sum(hand_counts34[d] for d in dora_set34)
+    for grp in board.melds[0]:
+        for c in grp:
+            if is_aka5(c):
+                conf_dora += 1
+            if code_to_34(c) in dora_set34:
+                conf_dora += 1
+    if p_cnt == 3:
+        conf_dora += board.kita[0]
+    conf_yakuhai = sum(1 for z in (31, 32, 33) if hand_counts34[z] >= 3)
+    confirmed_han = conf_dora + conf_yakuhai
+    if board.riichi[0]:
+        confirmed_han += 1
+
+    best_han_est = max((e.est_han for e in raw_evals), default=1.0)
+    min_han = max(1, confirmed_han + (1 if num_melds == 0 and cur_sh <= 1 else 0))
+    max_han = max(min_han + 1, int(round(best_han_est)) + (2 if num_melds == 0 else 1))
+    expected_han_range = f'{min_han}~{max_han}番'
 
     return RecommendationResult(
         current_shanten=cur_sh,
